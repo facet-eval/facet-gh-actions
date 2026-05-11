@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: FACET runtime bugs and experiment specs
+    url: https://github.com/facet-eval/facet-system/issues
+    about: This repo only ships the GitHub Action. Bugs in `@facet/core`, `@facet/sdk`, `@facet/harness-pi`, presets, or experiment specs belong upstream.
+  - name: Pi SDK bugs
+    url: https://github.com/badlogic/pi
+    about: Issues with `@mariozechner/pi-coding-agent` belong upstream.
+  - name: Security vulnerabilities
+    url: https://github.com/facet-eval/facet-gh-actions/security/advisories/new
+    about: Use private security advisories for vulnerability reports — do not open a public issue.

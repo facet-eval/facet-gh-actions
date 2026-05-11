@@ -1,0 +1,67 @@
+name: Run ring-default-specific
+
+# Manual smoke run of examples/ring-default-specific from facet-eval/facet-system.
+# The experiment is 3 cells (1 prompt × 3 scenarios × 1 profile × 1 model × 1 rep)
+# against inclusionai/ring-2.6-1t:free on OpenRouter. Free model — cost is near zero,
+# but you MUST set OPENROUTER_API_KEY in this repo's secrets for the request to go through.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_mode:
+        description: 'Run mode'
+        type: choice
+        options: [full, single, dry]
+        default: single
+      facet_system_ref:
+        description: 'Git ref of facet-eval/facet-system to use'
+        type: string
+        default: 'main'
+      artifact_mode:
+        description: 'Artifact contents'
+        type: choice
+        options: [minimal, full]
+        default: minimal
+
+jobs:
+  experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout this action repo
+        uses: actions/checkout@v4
+
+      - name: Checkout FACET runtime
+        uses: actions/checkout@v4
+        with:
+          repository: facet-eval/facet-system
+          ref: ${{ inputs.facet_system_ref }}
+          path: _facet-runtime
+
+      - name: Run ring-default-specific
+        id: facet
+        uses: ./facet
+        with:
+          command: run
+          spec_path: _facet-runtime/examples/ring-default-specific
+          facet_repo_path: _facet-runtime
+          run_mode: ${{ inputs.run_mode }}
+          artifact_mode: ${{ inputs.artifact_mode }}
+          timeout_minutes: 45
+          retention_days: 14
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### ring-default-specific" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Mode | ${{ inputs.run_mode }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| FACET ref | ${{ inputs.facet_system_ref }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Bundle | ${{ steps.facet.outputs.result_bundle_name || '(none)' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Runs | ${{ steps.facet.outputs.run_count || '(unknown)' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Artifact | ${{ steps.facet.outputs.artifact_name || '(not uploaded)' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Exit code | ${{ steps.facet.outputs.exit_code || 'n/a' }} |" >> "$GITHUB_STEP_SUMMARY"
