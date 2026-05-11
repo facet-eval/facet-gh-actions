@@ -1,0 +1,19 @@
+# Local environment / API keys
+.env
+.env.local
+.env.*.local
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Result bundles produced by ad-hoc local tests
+result-*/

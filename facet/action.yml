@@ -1,0 +1,236 @@
+name: 'FACET'
+description: 'Run a FACET experiment in CI. Composite action that handles Pi SDK pinning, dependency installation, validation, run, and artifact packaging.'
+author: 'facet-eval'
+branding:
+  icon: 'box'
+  color: 'blue'
+
+inputs:
+  command:
+    description: 'FACET subcommand: run, validate, spec-show, hash-profile'
+    required: false
+    default: 'run'
+  spec_path:
+    description: 'Path to the experiment package directory (containing spec.yaml + scenarios/)'
+    required: true
+  facet_repo_path:
+    description: 'Path to the checked-out FACET monorepo. Use when calling the action from an external repo that clones FACET separately.'
+    required: false
+    default: '.'
+  run_mode:
+    description: 'full = entire matrix, single = first cell, dry = validate only (skip run)'
+    required: false
+    default: 'full'
+  artifact_mode:
+    description: 'minimal = aggregated/ + tests.json only. full = entire result bundle including workspaces/ and trace.jsonl.'
+    required: false
+    default: 'minimal'
+  timeout_minutes:
+    description: 'Timeout for the pnpm facet run step. Experiment matrices with many runs need higher values.'
+    required: false
+    default: '60'
+  node_version:
+    description: 'Node.js version for actions/setup-node'
+    required: false
+    default: '22'
+  pnpm_version:
+    description: 'pnpm version for pnpm/action-setup'
+    required: false
+    default: '9'
+  build:
+    description: 'Run pnpm install --frozen-lockfile && pnpm build before FACET'
+    required: false
+    default: 'true'
+  auto_install_deps:
+    description: 'Run install-deps.sh on the spec before validation'
+    required: false
+    default: 'true'
+  upload_results:
+    description: 'Upload the result bundle as a GitHub Actions artifact'
+    required: false
+    default: 'true'
+  retention_days:
+    description: 'Artifact retention period'
+    required: false
+    default: '7'
+  strict_schema:
+    description: 'Set FACET_STRICT_SCHEMA=true for the run'
+    required: false
+    default: 'false'
+
+outputs:
+  result_bundle_path:
+    description: 'Absolute path to the generated result-*/ directory'
+    value: ${{ steps.package-artifact.outputs.result_bundle_path }}
+  result_bundle_name:
+    description: 'Basename of the bundle directory'
+    value: ${{ steps.package-artifact.outputs.result_bundle_name }}
+  artifact_name:
+    description: 'Name of the uploaded artifact (.tar.gz)'
+    value: ${{ steps.package-artifact.outputs.artifact_name }}
+  exit_code:
+    description: 'FACET CLI exit code'
+    value: ${{ steps.run-facet.outputs.exit_code }}
+  run_count:
+    description: 'Number of runs executed (parsed from manifest.yaml)'
+    value: ${{ steps.set-outputs.outputs.run_count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: ${{ inputs.pnpm_version }}
+
+    - name: Configure git identity
+      shell: bash
+      run: |
+        git config --global user.name "facet-ci"
+        git config --global user.email "ci@facet"
+
+    - name: Pin Pi SDK version from spec
+      if: inputs.build != 'false'
+      shell: bash
+      run: |
+        bash "${{ github.action_path }}/scripts/pin-pi-version.sh" \
+          "${{ inputs.spec_path }}" \
+          "${{ inputs.facet_repo_path }}"
+
+    - name: Install dependencies and build FACET
+      if: inputs.build != 'false'
+      shell: bash
+      working-directory: ${{ inputs.facet_repo_path }}
+      run: |
+        pnpm install --frozen-lockfile
+        pnpm build
+
+    - name: Auto-install scenario binaries
+      if: inputs.auto_install_deps != 'false'
+      shell: bash
+      env:
+        FACET_REPO_PATH: ${{ github.workspace }}/${{ inputs.facet_repo_path }}
+      run: |
+        bash "${{ github.action_path }}/scripts/install-deps.sh" "${{ inputs.spec_path }}"
+
+    - name: Create .env from caller secrets
+      shell: bash
+      working-directory: ${{ inputs.facet_repo_path }}
+      env:
+        OPENROUTER_API_KEY: ${{ env.OPENROUTER_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ env.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ env.OPENAI_API_KEY }}
+      run: |
+        : > .env
+        for key in OPENROUTER_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY; do
+          value="${!key:-}"
+          if [[ -n "$value" ]]; then
+            printf '%s=%s\n' "$key" "$value" >> .env
+            echo "  ✓ wrote $key to .env"
+          fi
+        done
+
+    - name: Validate spec
+      shell: bash
+      working-directory: ${{ inputs.facet_repo_path }}
+      env:
+        FACET_STRICT_SCHEMA: ${{ inputs.strict_schema == 'true' && 'true' || '' }}
+      run: |
+        # spec_path may be relative to the caller workspace, not facet_repo_path.
+        # Resolve to absolute before invoking the CLI from inside facet_repo_path.
+        SPEC_ABS="$(cd "$GITHUB_WORKSPACE" && realpath "${{ inputs.spec_path }}")"
+        pnpm facet spec validate "$SPEC_ABS"
+
+    - name: Run FACET
+      id: run-facet
+      if: inputs.run_mode != 'dry'
+      shell: bash
+      working-directory: ${{ inputs.facet_repo_path }}
+      env:
+        FACET_STRICT_SCHEMA: ${{ inputs.strict_schema == 'true' && 'true' || '' }}
+      run: |
+        SPEC_ABS="$(cd "$GITHUB_WORKSPACE" && realpath "${{ inputs.spec_path }}")"
+        FLAGS=()
+        if [[ "${{ inputs.run_mode }}" == "single" ]]; then
+          FLAGS+=("--single")
+        fi
+        set +e
+        timeout "${{ inputs.timeout_minutes }}m" \
+          pnpm facet "${{ inputs.command }}" "$SPEC_ABS" "${FLAGS[@]}"
+        RC=$?
+        set -e
+        echo "exit_code=$RC" >> "$GITHUB_OUTPUT"
+        if [[ $RC -ne 0 ]]; then
+          echo "::warning::FACET CLI exited with $RC"
+        fi
+        exit $RC
+
+    - name: Package result bundle
+      id: package-artifact
+      if: always() && inputs.run_mode != 'dry' && inputs.upload_results != 'false'
+      shell: bash
+      run: |
+        SPEC_ABS="$(cd "$GITHUB_WORKSPACE" && realpath "${{ inputs.spec_path }}")"
+        BUNDLE=$(ls -1dt "$SPEC_ABS"/result-*/ 2>/dev/null | head -1 || true)
+        if [[ -z "$BUNDLE" ]]; then
+          echo "::warning::No result-*/ directory found under $SPEC_ABS — skipping package step"
+          exit 0
+        fi
+        BUNDLE="${BUNDLE%/}"
+        BUNDLE_NAME="$(basename "$BUNDLE")"
+        ARCHIVE="$GITHUB_WORKSPACE/${BUNDLE_NAME}.tar.gz"
+
+        if [[ "${{ inputs.artifact_mode }}" == "minimal" ]]; then
+          tar -czf "$ARCHIVE" \
+            --exclude='*/workspaces' \
+            --exclude='*/trace.jsonl' \
+            -C "$(dirname "$BUNDLE")" "$BUNDLE_NAME"
+        else
+          tar -czf "$ARCHIVE" -C "$(dirname "$BUNDLE")" "$BUNDLE_NAME"
+        fi
+
+        echo "result_bundle_path=$BUNDLE" >> "$GITHUB_OUTPUT"
+        echo "result_bundle_name=$BUNDLE_NAME" >> "$GITHUB_OUTPUT"
+        echo "artifact_name=${BUNDLE_NAME}.tar.gz" >> "$GITHUB_OUTPUT"
+        echo "  ✓ archive: $ARCHIVE"
+
+    - name: Upload result artifact
+      if: always() && steps.package-artifact.outputs.artifact_name != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.package-artifact.outputs.artifact_name }}
+        path: ${{ github.workspace }}/${{ steps.package-artifact.outputs.artifact_name }}
+        retention-days: ${{ inputs.retention_days }}
+
+    - name: Set run_count output
+      id: set-outputs
+      if: always() && steps.package-artifact.outputs.result_bundle_path != ''
+      shell: bash
+      run: |
+        MANIFEST="${{ steps.package-artifact.outputs.result_bundle_path }}/manifest.yaml"
+        if [[ ! -f "$MANIFEST" ]]; then
+          echo "run_count=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        COUNT=$(python3 -c "
+        import yaml, sys
+        try:
+            doc = yaml.safe_load(open('$MANIFEST')) or {}
+        except Exception:
+            print('')
+            sys.exit(0)
+        runs = doc.get('runs')
+        if isinstance(runs, list):
+            print(len(runs))
+        elif isinstance(doc.get('run_count'), int):
+            print(doc['run_count'])
+        else:
+            print('')
+        " 2>/dev/null || echo "")
+        echo "run_count=$COUNT" >> "$GITHUB_OUTPUT"
+        echo "  ✓ run_count=$COUNT"

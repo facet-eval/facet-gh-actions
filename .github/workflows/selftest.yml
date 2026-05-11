@@ -1,0 +1,53 @@
+name: Selftest
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  selftest-dry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout this action repo
+        uses: actions/checkout@v4
+
+      - name: Checkout FACET monorepo
+        uses: actions/checkout@v4
+        with:
+          repository: facet-eval/facet-system
+          path: facet
+
+      - name: Run validate + dry mode on hello-world-experiment
+        uses: ./facet
+        with:
+          command: validate
+          spec_path: facet/examples/hello-world-experiment
+          facet_repo_path: facet
+          run_mode: dry
+          auto_install_deps: true
+          upload_results: false
+
+  parse-check-scripts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bash -n on all shell scripts
+        run: |
+          set -e
+          for f in facet/scripts/*.sh; do
+            echo "  parsing $f"
+            bash -n "$f"
+          done
+          echo "  ✓ all scripts parse"
+
+      - name: action.yml lint (yamllint if available)
+        run: |
+          if command -v yamllint >/dev/null 2>&1; then
+            yamllint -d "{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable}}" facet/action.yml .github/workflows/selftest.yml
+          else
+            echo "  yamllint not installed — skipping lint"
+          fi
