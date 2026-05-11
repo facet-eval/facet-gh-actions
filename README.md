@@ -2,6 +2,8 @@
 
 Composite GitHub Action to run [FACET](https://github.com/facet-eval/facet-system) experiments in CI.
 
+> **Bundled example:** `examples/ring-default-specific/` ships with this repo. It is the live proof that Pi Coding Agent can run end-to-end on GitHub Actions against a real experiment. Trigger it from [Actions → Run ring-default-specific](https://github.com/facet-eval/facet-gh-actions/actions/workflows/run-ring-default-specific.yml) (requires `OPENROUTER_API_KEY` repo secret).
+
 The action treats `pnpm facet` as a black-box CLI. It does the surrounding plumbing:
 
 - Sets up Node + pnpm.

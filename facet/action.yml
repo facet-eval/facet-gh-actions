@@ -175,10 +175,18 @@ runs:
       if: always() && inputs.run_mode != 'dry' && inputs.upload_results != 'false'
       shell: bash
       run: |
+        # FACET writes the bundle to `process.cwd()` of the run-facet step,
+        # which uses `working-directory: ${{ inputs.facet_repo_path }}`.
+        # Look there first; fall back to spec_path in case a future runner
+        # version changes the convention.
+        FACET_REPO_ABS="$(cd "$GITHUB_WORKSPACE" && realpath "${{ inputs.facet_repo_path }}")"
         SPEC_ABS="$(cd "$GITHUB_WORKSPACE" && realpath "${{ inputs.spec_path }}")"
-        BUNDLE=$(ls -1dt "$SPEC_ABS"/result-*/ 2>/dev/null | head -1 || true)
+        BUNDLE=$(ls -1dt "$FACET_REPO_ABS"/result-*/ 2>/dev/null | head -1 || true)
         if [[ -z "$BUNDLE" ]]; then
-          echo "::warning::No result-*/ directory found under $SPEC_ABS — skipping package step"
+          BUNDLE=$(ls -1dt "$SPEC_ABS"/result-*/ 2>/dev/null | head -1 || true)
+        fi
+        if [[ -z "$BUNDLE" ]]; then
+          echo "::warning::No result-*/ directory found under $FACET_REPO_ABS or $SPEC_ABS — skipping package step"
           exit 0
         fi
         BUNDLE="${BUNDLE%/}"

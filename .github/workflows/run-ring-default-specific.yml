@@ -1,9 +1,13 @@
 name: Run ring-default-specific
 
-# Manual smoke run of examples/ring-default-specific from facet-eval/facet-system.
-# The experiment is 3 cells (1 prompt × 3 scenarios × 1 profile × 1 model × 1 rep)
-# against inclusionai/ring-2.6-1t:free on OpenRouter. Free model — cost is near zero,
-# but you MUST set OPENROUTER_API_KEY in this repo's secrets for the request to go through.
+# Manual smoke run of the bundled `examples/ring-default-specific` spec
+# (lives inside THIS repo at examples/ring-default-specific/). The example
+# is the proof that Pi Coding Agent can run end-to-end on GitHub Actions
+# with a real experiment, not just `validate --dry`.
+#
+# Matrix: 1 prompt × 3 scenarios × 1 profile × 1 model × 1 repetition = 3 cells
+# Model:  inclusionai/ring-2.6-1t:free on OpenRouter (free tier)
+# Secret: OPENROUTER_API_KEY (required — OpenRouter still rate-limits free models).
 
 on:
   workflow_dispatch:
@@ -14,7 +18,7 @@ on:
         options: [full, single, dry]
         default: single
       facet_system_ref:
-        description: 'Git ref of facet-eval/facet-system to use'
+        description: 'Git ref of facet-eval/facet-system (the runtime) to check out'
         type: string
         default: 'main'
       artifact_mode:
@@ -28,22 +32,50 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout this action repo
+      - name: Checkout this action repo (includes the bundled spec)
         uses: actions/checkout@v4
 
-      - name: Checkout FACET runtime
+      - name: Checkout FACET runtime (provides `pnpm facet`)
         uses: actions/checkout@v4
         with:
           repository: facet-eval/facet-system
           ref: ${{ inputs.facet_system_ref }}
           path: _facet-runtime
 
+      - name: Register custom Pi model (~/.pi/agent/models.json)
+        # `inclusionai/ring-2.6-1t:free` is not in the Pi SDK's default
+        # ModelRegistry. Pi looks up custom models from
+        # ~/.pi/agent/models.json. Merge the spec-local declaration before
+        # the run. (When FACET implements Tier 1 of the pi-custom-model-registry
+        # audit, this step can be removed.)
+        run: |
+          mkdir -p "$HOME/.pi/agent"
+          node -e "
+          const fs = require('fs');
+          const path = require('path');
+          const globalPath = path.join(process.env.HOME, '.pi/agent/models.json');
+          const localPath = 'examples/ring-default-specific/models.json';
+          const global = fs.existsSync(globalPath)
+            ? JSON.parse(fs.readFileSync(globalPath, 'utf8'))
+            : { providers: {} };
+          const local = JSON.parse(fs.readFileSync(localPath, 'utf8'));
+          for (const [prov, decl] of Object.entries(local.providers)) {
+            const bucket = (global.providers[prov] ??= { models: [] });
+            for (const m of decl.models) {
+              const i = bucket.models.findIndex(x => x.id === m.id);
+              if (i >= 0) bucket.models[i] = m; else bucket.models.push(m);
+            }
+          }
+          fs.writeFileSync(globalPath, JSON.stringify(global, null, 2) + '\n');
+          console.log('  ✓ merged into ' + globalPath);
+          "
+
       - name: Run ring-default-specific
         id: facet
         uses: ./facet
         with:
           command: run
-          spec_path: _facet-runtime/examples/ring-default-specific
+          spec_path: examples/ring-default-specific
           facet_repo_path: _facet-runtime
           run_mode: ${{ inputs.run_mode }}
           artifact_mode: ${{ inputs.artifact_mode }}
