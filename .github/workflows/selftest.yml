@@ -17,14 +17,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: facet-eval/facet-system
-          path: facet
+          path: _facet-runtime
 
       - name: Run validate + dry mode on hello-world-experiment
         uses: ./facet
         with:
           command: validate
-          spec_path: facet/examples/hello-world-experiment
-          facet_repo_path: facet
+          spec_path: _facet-runtime/examples/hello-world-experiment
+          facet_repo_path: _facet-runtime
           run_mode: dry
           auto_install_deps: true
           upload_results: false
